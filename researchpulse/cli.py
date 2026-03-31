@@ -200,6 +200,103 @@ def run_all(
     asyncio.run(_run_all())
 
 
+@app.command("process")
+def process(
+    source: Optional[str] = typer.Argument(None, help="Source to scrape+process (or all if omitted)"),
+    skip_summary: bool = typer.Option(False, "--no-summary", help="Skip LLM summarization"),
+    skip_classify: bool = typer.Option(False, "--no-classify", help="Skip LLM classification"),
+    skip_dedup: bool = typer.Option(False, "--no-dedup", help="Skip semantic deduplication"),
+    skip_embed: bool = typer.Option(False, "--no-embed", help="Skip embedding generation"),
+    save: bool = typer.Option(True, "--save/--no-save", help="Save to DB and vector store"),
+    config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Path to config.yaml"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug logging"),
+) -> None:
+    """Scrape and run the full processing pipeline (chunk → embed → summarize → classify → dedup)."""
+    setup_logging(level="DEBUG" if verbose else "INFO")
+    if config_path:
+        reset_config()
+        get_config(config_path)
+
+    async def _process():
+        from researchpulse.pipeline.orchestrator import Pipeline
+
+        # Step 1: Scrape
+        sources_to_run = []
+        config = get_config()
+        if source:
+            sources_to_run = [source]
+        else:
+            if config.scraping.sources.arxiv.enabled:
+                sources_to_run.append("arxiv")
+            if config.scraping.sources.github.enabled:
+                sources_to_run.append("github")
+            if config.scraping.sources.news.enabled:
+                sources_to_run.append("news")
+            if config.scraping.sources.reddit.enabled:
+                sources_to_run.append("reddit")
+
+        console.print(f"🕷️ Scraping [bold]{', '.join(sources_to_run)}[/bold]...")
+        all_items = []
+        for src in sources_to_run:
+            try:
+                items = await _run_scraper(src, save=False)
+                all_items.extend(items)
+            except Exception as e:
+                console.print(f"[red]❌ {src} scrape failed: {e}[/red]")
+
+        if not all_items:
+            console.print("[yellow]No items scraped, nothing to process.[/yellow]")
+            return
+
+        # Step 2: Run pipeline
+        console.print(f"\n⚙️ Processing [bold]{len(all_items)}[/bold] items through pipeline...")
+        pipeline = Pipeline(config)
+
+        if save:
+            result = await pipeline.process_and_store(
+                all_items,
+                skip_summary=skip_summary,
+                skip_classify=skip_classify,
+                skip_dedup=skip_dedup,
+                skip_embed=skip_embed,
+            )
+        else:
+            processed, result = await pipeline.process(
+                all_items,
+                skip_summary=skip_summary,
+                skip_classify=skip_classify,
+                skip_dedup=skip_dedup,
+                skip_embed=skip_embed,
+            )
+
+        # Display results
+        from rich.table import Table
+        table = Table(title="📊 Pipeline Results")
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", style="green")
+
+        table.add_row("Input items", str(result.total_input))
+        table.add_row("Chunks created", str(result.total_chunks))
+        table.add_row("Embeddings generated", str(result.total_embedded))
+        table.add_row("After dedup", str(result.total_after_dedup))
+        table.add_row("Summarized", str(result.total_summarized))
+        table.add_row("Classified", str(result.total_classified))
+        table.add_row("Stored to DB", str(result.total_stored))
+        table.add_row("Errors", str(len(result.errors)))
+        console.print(table)
+
+        if result.errors:
+            for err in result.errors:
+                console.print(f"  [red]⚠ {err}[/red]")
+
+        if result.success:
+            console.print("\n[bold green]✅ Pipeline complete![/bold green]")
+        else:
+            console.print("\n[bold yellow]⚠ Pipeline completed with errors[/bold yellow]")
+
+    asyncio.run(_process())
+
+
 @app.command("init-db")
 def init_db(
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Path to config.yaml"),
