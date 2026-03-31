@@ -387,6 +387,110 @@ def export_data(
     asyncio.run(_export())
 
 
+@app.command("digest")
+def digest(
+    frequency: str = typer.Option("daily", "--frequency", "-f", help="daily or weekly"),
+    fmt: str = typer.Option("markdown", "--format", help="markdown or html"),
+    output_dir: Optional[str] = typer.Option(None, "--output", "-o", help="Save to directory"),
+    config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Path to config.yaml"),
+) -> None:
+    """Generate a research digest."""
+    setup_logging()
+    if config_path:
+        reset_config()
+        get_config(config_path)
+
+    async def _digest():
+        from researchpulse.outputs.digest_generator import DigestGenerator
+
+        config = get_config()
+        generator = DigestGenerator(config=config, frequency=frequency, fmt=fmt)
+
+        if output_dir:
+            path = await generator.save_to_file(output_dir)
+            console.print(f"[green]📬 Digest saved to: {path}[/green]")
+        else:
+            content = await generator.generate()
+            console.print(content)
+
+    asyncio.run(_digest())
+
+
+@app.command("ask")
+def ask(
+    question: str = typer.Argument(help="Question to ask the knowledge base"),
+    source: Optional[str] = typer.Option(None, "--source", "-s", help="Filter by source"),
+    top_k: int = typer.Option(10, "--top-k", "-k", help="Number of sources to retrieve"),
+    config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Path to config.yaml"),
+) -> None:
+    """Ask a question using RAG over the knowledge base."""
+    setup_logging()
+    if config_path:
+        reset_config()
+        get_config(config_path)
+
+    async def _ask():
+        from researchpulse.outputs.rag_query import RAGQuery
+
+        config = get_config()
+        rag = RAGQuery(config=config, top_k=top_k)
+
+        try:
+            result = await rag.ask(question=question, source_filter=source)
+
+            console.print(f"\n💡 [bold]Answer:[/bold]\n")
+            console.print(result["answer"])
+
+            if result["sources"]:
+                from rich.table import Table
+                table = Table(title="\n📚 Sources")
+                table.add_column("Title", style="cyan", max_width=50)
+                table.add_column("Source", style="blue")
+                table.add_column("Score", style="green")
+                table.add_column("URL", style="dim", max_width=40)
+
+                for src in result["sources"]:
+                    table.add_row(
+                        src["title"][:50],
+                        src.get("source", ""),
+                        f"{src.get('score', 0):.2f}",
+                        src.get("url", "")[:40],
+                    )
+                console.print(table)
+        except Exception as e:
+            console.print(f"[red]❌ RAG query failed: {e}[/red]")
+        finally:
+            await rag.close()
+
+    asyncio.run(_ask())
+
+
+@app.command("serve")
+def serve(
+    host: str = typer.Option("0.0.0.0", "--host", help="Bind host"),
+    port: int = typer.Option(8000, "--port", "-p", help="Bind port"),
+    reload: bool = typer.Option(False, "--reload", help="Auto-reload on code changes"),
+    config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Path to config.yaml"),
+) -> None:
+    """Start the FastAPI dashboard API server."""
+    setup_logging()
+    if config_path:
+        reset_config()
+        get_config(config_path)
+
+    import uvicorn
+
+    console.print(f"🚀 Starting ResearchPulse API at [bold]http://{host}:{port}[/bold]")
+    console.print(f"   📖 Docs: http://{host}:{port}/docs")
+    uvicorn.run(
+        "researchpulse.outputs.dashboard_api:create_app",
+        host=host,
+        port=port,
+        reload=reload,
+        factory=True,
+    )
+
+
 @app.command("check")
 def check(
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Path to config.yaml"),

@@ -107,7 +107,7 @@ class LLMConfig(BaseModel):
 class AlertsConfig(BaseModel):
     enabled: bool = True
     keywords: list[str] = Field(default_factory=list)
-    notify_via: Literal["slack", "ntfy", "email"] = "slack"
+    notify_via: Literal["slack", "ntfy", "email", "log"] = "slack"
     min_relevance: float = 0.8
 
 
