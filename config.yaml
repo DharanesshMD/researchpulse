@@ -1,0 +1,114 @@
+# ResearchPulse Configuration
+# Edit this file to customize sources, topics, and behavior.
+
+scraping:
+  schedule: "every 6 hours"
+  max_items_per_source: 50
+  request_timeout: 30
+
+  sources:
+    arxiv:
+      enabled: true
+      categories:
+        - "cs.AI"
+        - "cs.LG"
+        - "cs.CL"
+      keywords:
+        - "agentic AI"
+        - "on-device LLM"
+        - "RLHF"
+        - "transformer architecture"
+      max_results: 50
+      sort_by: "submitted"  # submitted, relevance, lastUpdatedDate
+
+    github:
+      enabled: true
+      topics:
+        - "llm"
+        - "rag"
+        - "agents"
+        - "machine-learning"
+      keywords:
+        - "large language model"
+        - "retrieval augmented generation"
+      min_stars: 50
+      sort_by: "stars"  # stars, forks, updated
+      max_results: 30
+
+    reddit:
+      enabled: true
+      subreddits:
+        - "MachineLearning"
+        - "LocalLLaMA"
+        - "artificial"
+      min_score: 50
+      sort_by: "hot"  # hot, new, top, rising
+      time_filter: "week"  # hour, day, week, month, year, all
+      max_results: 30
+
+    news:
+      enabled: true
+      feeds:
+        - url: "https://hnrss.org/frontpage"
+          name: "Hacker News"
+        - url: "https://techcrunch.com/feed/"
+          name: "TechCrunch"
+        - url: "https://arxiv-daily.com/rss"
+          name: "ArXiv Daily"
+      max_results_per_feed: 20
+      use_full_extraction: false  # Use crawl4ai for full article text
+
+interests:
+  topics:
+    - "AI agents"
+    - "edge inference"
+    - "compliance AI"
+    - "large language models"
+    - "retrieval augmented generation"
+  relevance_threshold: 0.75
+
+llm:
+  provider: "anthropic"  # anthropic or openai
+  anthropic:
+    model: "claude-sonnet-4-20250514"
+    max_tokens: 1024
+  openai:
+    model: "gpt-4o-mini"
+    max_tokens: 1024
+
+alerts:
+  enabled: true
+  keywords:
+    - "Gemma"
+    - "Snapdragon"
+    - "on-device"
+    - "RLHF breakthrough"
+  notify_via: "slack"  # slack, ntfy, email
+  min_relevance: 0.8
+
+outputs:
+  digest:
+    enabled: true
+    frequency: "daily"  # daily, weekly
+    format: "markdown"  # markdown, html
+    max_items_per_category: 10
+  export:
+    formats:
+      - "json"
+      - "parquet"
+    output_dir: "./exports"
+  rag:
+    enabled: true
+    chunk_size: 512
+    chunk_overlap: 50
+    top_k: 10
+
+database:
+  url: "postgresql+asyncpg://researchpulse:researchpulse@localhost:5432/researchpulse"
+
+vector_store:
+  url: "http://localhost:6333"
+  collection_name: "research_items"
+
+redis:
+  url: "redis://localhost:6379/0"
