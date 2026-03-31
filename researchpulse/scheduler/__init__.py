@@ -1,1 +1,1 @@
-"""Task scheduler modules (Phase 2)."""
+"""Task scheduler module — Celery tasks and beat schedule."""

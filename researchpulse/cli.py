@@ -491,6 +491,51 @@ def serve(
     )
 
 
+@app.command("scheduler")
+def scheduler(
+    worker: bool = typer.Option(False, "--worker", "-w", help="Start a Celery worker"),
+    beat: bool = typer.Option(False, "--beat", "-b", help="Start the Celery beat scheduler"),
+    loglevel: str = typer.Option("info", "--loglevel", "-l", help="Log level"),
+    config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Path to config.yaml"),
+) -> None:
+    """Start the Celery task scheduler (worker and/or beat)."""
+    setup_logging(level=loglevel.upper())
+    if config_path:
+        reset_config()
+        get_config(config_path)
+
+    from researchpulse.scheduler.tasks import create_celery_app
+
+    celery_app = create_celery_app()
+
+    if worker and beat:
+        console.print("🕐 Starting Celery worker + beat scheduler...")
+        celery_app.worker_main([
+            "worker",
+            f"--loglevel={loglevel}",
+            "--beat",
+            "--scheduler=celery.beat:PersistentScheduler",
+        ])
+    elif worker:
+        console.print("⚙️ Starting Celery worker...")
+        celery_app.worker_main([
+            "worker",
+            f"--loglevel={loglevel}",
+        ])
+    elif beat:
+        console.print("🕐 Starting Celery beat scheduler...")
+        celery_app.worker_main([
+            "beat",
+            f"--loglevel={loglevel}",
+        ])
+    else:
+        console.print("[yellow]Specify --worker and/or --beat to start the scheduler[/yellow]")
+        console.print("Examples:")
+        console.print("  researchpulse scheduler --worker --beat  # Both together")
+        console.print("  researchpulse scheduler --worker         # Worker only")
+        console.print("  researchpulse scheduler --beat            # Beat only")
+
+
 @app.command("check")
 def check(
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Path to config.yaml"),

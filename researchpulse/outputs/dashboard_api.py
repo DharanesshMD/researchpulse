@@ -2,20 +2,24 @@
 FastAPI dashboard API.
 
 REST endpoints for the Next.js dashboard:
-- GET  /api/items          — paginated feed of all items
-- GET  /api/items/{source} — items filtered by source
-- POST /api/ask            — RAG query endpoint
-- GET  /api/stats          — dashboard statistics
-- POST /api/alerts/check   — manually trigger alert check
-- GET  /api/digest         — generate and return a digest
-- GET  /api/health         — health check
+- GET  /api/items            — paginated feed of all items
+- GET  /api/items/{item_id}  — single item by ID
+- POST /api/ask              — RAG query endpoint
+- GET  /api/stats            — dashboard statistics
+- POST /api/alerts/check     — manually trigger alert check
+- GET  /api/digest           — generate and return a digest
+- GET  /api/config           — sanitized config for settings page
+- GET  /api/health           — health check
+- WS   /ws/feed              — real-time feed updates
 """
 
 from __future__ import annotations
 
+import asyncio
+import json as json_module
 from typing import Any, Literal, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -269,6 +273,117 @@ def create_app(config_path: str | None = None) -> FastAPI:
             "matches": len(matches),
             "items": matches,
         }
+
+    # -------------------------------------------------------------------
+    # Single item by ID
+    # -------------------------------------------------------------------
+    @app.get("/api/items/{item_id}")
+    async def get_item(item_id: int):
+        """Get a single research item by ID, searching across all sources."""
+        from researchpulse.storage.database import Database
+        from researchpulse.storage.repository import (
+            PaperRepository,
+            RepositoryRepo,
+            NewsArticleRepository,
+            RedditPostRepository,
+        )
+
+        config = get_config()
+        db = Database(config.database.url)
+
+        try:
+            async with db.session() as session:
+                repos = [
+                    PaperRepository(session),
+                    RepositoryRepo(session),
+                    NewsArticleRepository(session),
+                    RedditPostRepository(session),
+                ]
+                for repo in repos:
+                    item = await repo.get_by_id(item_id)
+                    if item is not None:
+                        return _model_to_dict(item)
+
+            raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+        finally:
+            await db.close()
+
+    # -------------------------------------------------------------------
+    # Config (sanitized — no API keys)
+    # -------------------------------------------------------------------
+    @app.get("/api/config")
+    async def get_sanitized_config():
+        """Return the application configuration with secrets stripped."""
+        config = get_config()
+
+        return {
+            "scraping": {
+                "schedule": config.scraping.schedule,
+                "max_items_per_source": config.scraping.max_items_per_source,
+                "sources": {
+                    "arxiv": {"enabled": config.scraping.sources.arxiv.enabled},
+                    "github": {"enabled": config.scraping.sources.github.enabled},
+                    "news": {"enabled": config.scraping.sources.news.enabled},
+                    "reddit": {"enabled": config.scraping.sources.reddit.enabled},
+                },
+            },
+            "interests": {
+                "topics": config.interests.topics,
+                "relevance_threshold": config.interests.relevance_threshold,
+            },
+            "llm": {
+                "provider": config.llm.provider,
+            },
+            "alerts": {
+                "enabled": config.alerts.enabled,
+                "keywords": config.alerts.keywords,
+                "notify_via": config.alerts.notify_via,
+                "min_relevance": config.alerts.min_relevance,
+            },
+            "outputs": {
+                "digest": {
+                    "enabled": config.outputs.digest.enabled,
+                    "frequency": config.outputs.digest.frequency,
+                    "format": config.outputs.digest.format,
+                },
+            },
+        }
+
+    # -------------------------------------------------------------------
+    # WebSocket — real-time feed
+    # -------------------------------------------------------------------
+    connected_clients: list[WebSocket] = []
+
+    @app.websocket("/ws/feed")
+    async def websocket_feed(websocket: WebSocket):
+        """Push new items to connected clients in real-time."""
+        await websocket.accept()
+        connected_clients.append(websocket)
+        try:
+            while True:
+                # Keep connection alive; client can send pings
+                data = await websocket.receive_text()
+                # Echo back as acknowledgement
+                await websocket.send_text(json_module.dumps({"type": "ack", "data": data}))
+        except WebSocketDisconnect:
+            connected_clients.remove(websocket)
+
+    # Helper for broadcasting new items (used by scheduler)
+    app.state.connected_clients = connected_clients
+
+    async def broadcast_items(items: list[dict[str, Any]]) -> None:
+        """Broadcast new items to all connected WebSocket clients."""
+        message = json_module.dumps({"type": "new_items", "items": items})
+        disconnected: list[WebSocket] = []
+        for client in connected_clients:
+            try:
+                await client.send_text(message)
+            except Exception:
+                disconnected.append(client)
+        for client in disconnected:
+            connected_clients.remove(client)
+
+    app.state.broadcast_items = broadcast_items
 
     return app
 

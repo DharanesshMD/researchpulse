@@ -1,6 +1,6 @@
 # ResearchPulse — Docker Compose
 # Run: docker compose up
-# Services: PostgreSQL, Redis, Qdrant
+# Services: PostgreSQL, Redis, Qdrant, Backend API, Frontend, Celery Worker, Celery Beat
 
 services:
   # -----------------------------------------------------------------------
@@ -55,6 +55,106 @@ services:
       - qdrant_data:/qdrant/storage
     environment:
       QDRANT__SERVICE__GRPC_PORT: 6334
+
+  # -----------------------------------------------------------------------
+  # Backend — FastAPI application
+  # -----------------------------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: researchpulse-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://researchpulse:researchpulse@postgres:5432/researchpulse"
+      REDIS_URL: "redis://redis:6379/0"
+      QDRANT_URL: "http://qdrant:6333"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+      REDDIT_CLIENT_ID: "${REDDIT_CLIENT_ID:-}"
+      REDDIT_CLIENT_SECRET: "${REDDIT_CLIENT_SECRET:-}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/health').raise_for_status()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # -----------------------------------------------------------------------
+  # Frontend — Next.js dashboard
+  # -----------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: researchpulse-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: "http://backend:8000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # -----------------------------------------------------------------------
+  # Celery Worker — task execution
+  # -----------------------------------------------------------------------
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: researchpulse-celery-worker
+    restart: unless-stopped
+    command: >
+      celery -A researchpulse.scheduler.tasks:get_celery_app worker
+      --loglevel=info
+      --concurrency=2
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://researchpulse:researchpulse@postgres:5432/researchpulse"
+      REDIS_URL: "redis://redis:6379/0"
+      QDRANT_URL: "http://qdrant:6333"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+      REDDIT_CLIENT_ID: "${REDDIT_CLIENT_ID:-}"
+      REDDIT_CLIENT_SECRET: "${REDDIT_CLIENT_SECRET:-}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # -----------------------------------------------------------------------
+  # Celery Beat — periodic task scheduler
+  # -----------------------------------------------------------------------
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: researchpulse-celery-beat
+    restart: unless-stopped
+    command: >
+      celery -A researchpulse.scheduler.tasks:get_celery_app beat
+      --loglevel=info
+      --scheduler=celery.beat:PersistentScheduler
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://researchpulse:researchpulse@postgres:5432/researchpulse"
+      REDIS_URL: "redis://redis:6379/0"
+      QDRANT_URL: "http://qdrant:6333"
+    depends_on:
+      redis:
+        condition: service_healthy
 
 volumes:
   postgres_data:
