@@ -28,16 +28,15 @@ class GitHubScraper(BaseScraper):
         # GitHub API: 10 requests/min unauthenticated, 30/min authenticated
         super().__init__(config, rate_limit=0.5, **kwargs)
         self.github_config = config.scraping.sources.github
-        self._setup_auth()
 
-    def _setup_auth(self) -> None:
-        """Set up GitHub token authentication if available."""
+    def _on_client_created(self, client: httpx.AsyncClient) -> None:
+        """Apply GitHub token authentication if available on client session creation."""
         import os
 
         token = os.environ.get("GITHUB_TOKEN")
         if token:
-            self.client.headers["Authorization"] = f"token {token}"
-            self.logger.info("GitHub authentication configured")
+            client.headers["Authorization"] = f"token {token}"
+            self.logger.info("GitHub authentication configured on client session")
 
     def _build_queries(self) -> list[str]:
         """Build GitHub search queries from config."""

@@ -64,10 +64,21 @@ class SourcesConfig(BaseModel):
     news: NewsSourceConfig = Field(default_factory=NewsSourceConfig)
 
 
+class ProxyConfig(BaseModel):
+    enabled: bool = False
+    ips: list[str] = Field(default_factory=list)
+    rotation_strategy: Literal["round_robin", "random"] = "round_robin"
+    health_check_url: str = "https://httpbin.org/ip"
+
+
 class ScrapingConfig(BaseModel):
     schedule: str = "every 6 hours"
     max_items_per_source: int = 50
     request_timeout: int = 30
+    max_retries: int = 3
+    user_agent_rotation: bool = True
+    custom_user_agents: list[str] = Field(default_factory=list)
+    proxies: ProxyConfig = Field(default_factory=ProxyConfig)
     sources: SourcesConfig = Field(default_factory=SourcesConfig)
 
 
@@ -186,6 +197,18 @@ def _resolve_env_vars(data: dict | list | str) -> dict | list | str:
     return data
 
 
+def _apply_env_overrides(data: dict) -> None:
+    """Apply environment variable overrides to the config dict before validation."""
+    proxies_env = os.environ.get("RESEARCHPULSE_PROXIES")
+    if proxies_env:
+        scraping = data.setdefault("scraping", {})
+        proxies = scraping.setdefault("proxies", {})
+        ips = [ip.strip() for ip in proxies_env.split(",") if ip.strip()]
+        if ips:
+            proxies["ips"] = ips
+            proxies["enabled"] = True
+
+
 def load_config(config_path: str | Path | None = None) -> ResearchPulseConfig:
     """
     Load and validate configuration from a YAML file.
@@ -213,10 +236,14 @@ def load_config(config_path: str | Path | None = None) -> ResearchPulseConfig:
             raw_data = yaml.safe_load(f) or {}
 
         resolved_data = _resolve_env_vars(raw_data)
+        if isinstance(resolved_data, dict):
+            _apply_env_overrides(resolved_data)
         return ResearchPulseConfig.model_validate(resolved_data)
 
-    # No config file found — use defaults
-    return ResearchPulseConfig()
+    # No config file found — use defaults (with env overrides if applicable)
+    default_data = {}
+    _apply_env_overrides(default_data)
+    return ResearchPulseConfig.model_validate(default_data)
 
 
 # Module-level singleton (lazy)

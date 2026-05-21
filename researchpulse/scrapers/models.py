@@ -26,7 +26,7 @@ class ScrapedItem:
     source: str  # "arxiv", "github", "news", "reddit"
     content: str = ""
     published_at: datetime | None = None
-    scraped_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    scraped_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     tags: list[str] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 

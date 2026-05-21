@@ -620,5 +620,125 @@ def check(
     console.print("\n[green]✅ System check complete[/green]")
 
 
+@app.command("check-ips")
+def check_ips(
+    config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Path to config.yaml"),
+) -> None:
+    """Verify proxy configuration, connectivity, latency, and target reachability."""
+    setup_logging()
+    if config_path:
+        reset_config()
+        get_config(config_path)
+
+    async def _check_ips():
+        import time
+        import httpx
+        from rich.table import Table
+        from researchpulse.config import get_config
+        
+        config = get_config()
+        proxies_config = config.scraping.proxies
+
+        console.print("🔍 [bold]ResearchPulse Proxy & IP Health Check[/bold]\n")
+
+        # Get list of IPs to check (include direct/no-proxy as the first entry for baseline)
+        targets_to_test = []
+        # Add baseline (direct connection)
+        targets_to_test.append(("Direct (No Proxy)", None))
+
+        if proxies_config.enabled and proxies_config.ips:
+            for ip in proxies_config.ips:
+                targets_to_test.append((ip, ip))
+        elif proxies_config.enabled:
+            console.print("[yellow]⚠ Proxy rotation is enabled in config, but no proxy IPs are listed.[/yellow]\n")
+        else:
+            console.print("[dim]Proxy rotation is disabled. Testing baseline direct connection only.[/dim]\n")
+
+        table = Table(title="IP & Proxy Connectivity Status")
+        table.add_column("Proxy Config / URL", style="cyan", max_width=40)
+        table.add_column("Status")
+        table.add_column("Public IP", style="green")
+        table.add_column("Latency (ms)", justify="right")
+        table.add_column("ArXiv", justify="center")
+        table.add_column("GitHub", justify="center")
+        table.add_column("Reddit", justify="center")
+
+        # Target sites to test blockages
+        test_sites = {
+            "arxiv": "https://export.arxiv.org/api/query?search_query=all:electron",
+            "github": "https://api.github.com/zen",
+            "reddit": "https://www.reddit.com/r/MachineLearning/about.json",
+        }
+
+        for name, proxy_url in targets_to_test:
+            # We want to use our custom user agent for the checks
+            headers = {"User-Agent": "ResearchPulse/0.1 (IP-Health-Checker)"}
+            
+            # 1. Check IP and Latency
+            latency = "N/A"
+            public_ip = "Unknown"
+            status_str = "[red]Failed ❌[/red]"
+            reachability = {"arxiv": "❌", "github": "❌", "reddit": "❌"}
+            
+            # Create client for this specific proxy
+            client_proxy = proxy_url if proxy_url else None
+            
+            async with httpx.AsyncClient(proxy=client_proxy, headers=headers, timeout=10.0) as client:
+                # Test health check URL to get public IP
+                start_time = time.time()
+                try:
+                    res = await client.get(proxies_config.health_check_url)
+                    latency_ms = int((time.time() - start_time) * 1000)
+                    latency = f"{latency_ms}ms"
+                    
+                    if res.status_code == 200:
+                        status_str = "[green]Healthy ✅[/green]"
+                        try:
+                            data = res.json()
+                            public_ip = data.get("origin", "Unknown")
+                        except Exception:
+                            public_ip = "OK (JSON parse failed)"
+                    else:
+                        status_str = f"[yellow]HTTP {res.status_code} ⚠[/yellow]"
+                except Exception as e:
+                    status_str = f"[red]Error: {type(e).__name__} ❌[/red]"
+                    # Skip testing sites if proxy doesn't even connect to health check
+                    table.add_row(name, status_str, public_ip, latency, "—", "—", "—")
+                    continue
+
+                # 2. Test reachability/blockage for each target site
+                for site_name, site_url in test_sites.items():
+                    try:
+                        # For reddit, we need a realistic User-Agent, otherwise it blocks with 429
+                        site_headers = dict(headers)
+                        if site_name == "reddit":
+                            site_headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                        
+                        site_res = await client.get(site_url, headers=site_headers, follow_redirects=True)
+                        if site_res.status_code in (200, 201):
+                            reachability[site_name] = "[green]OK[/green]"
+                        elif site_res.status_code in (403, 429):
+                            reachability[site_name] = f"[red]Blocked ({site_res.status_code})[/red]"
+                        else:
+                            reachability[site_name] = f"[yellow]HTTP {site_res.status_code}[/yellow]"
+                    except Exception:
+                        reachability[site_name] = "[red]Timeout/Err[/red]"
+
+            table.add_row(
+                name,
+                status_str,
+                public_ip,
+                latency,
+                reachability["arxiv"],
+                reachability["github"],
+                reachability["reddit"],
+            )
+
+        console.print(table)
+        console.print("\n[dim]Note: Blocked/Err indicates that the proxy IP is likely flagged or blocked by the corresponding target server.[/dim]")
+
+    asyncio.run(_check_ips())
+
+
 if __name__ == "__main__":
     app()

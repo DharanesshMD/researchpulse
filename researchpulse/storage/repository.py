@@ -8,6 +8,7 @@ URL-based deduplication via upsert.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Generic, TypeVar, Type, Sequence
 
 from sqlalchemy import select, func
@@ -198,6 +199,14 @@ class RedditPostRepository(BaseRepository[RedditPost]):
 # ---------------------------------------------------------------------------
 
 
+def _to_naive_utc(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
 def scraped_item_to_model(item: ScrapedItem) -> Paper | Repository | NewsArticle | RedditPost:
     """
     Convert a ScrapedItem to the appropriate SQLModel instance.
@@ -206,6 +215,8 @@ def scraped_item_to_model(item: ScrapedItem) -> Paper | Repository | NewsArticle
     Extra source-specific fields are pulled from `item.extra`.
     """
     tags_str = ",".join(item.tags) if item.tags else None
+    scraped_at = _to_naive_utc(item.scraped_at)
+    published_at = _to_naive_utc(item.published_at)
 
     if item.source == "arxiv":
         return Paper(
@@ -214,8 +225,8 @@ def scraped_item_to_model(item: ScrapedItem) -> Paper | Repository | NewsArticle
             source=SourceType.ARXIV,
             content=item.content,
             tags=tags_str,
-            scraped_at=item.scraped_at,
-            published_at=item.published_at,
+            scraped_at=scraped_at,
+            published_at=published_at,
             arxiv_id=item.extra.get("arxiv_id", ""),
             authors=item.extra.get("authors", "[]"),
             categories=item.extra.get("categories", ""),
@@ -232,8 +243,8 @@ def scraped_item_to_model(item: ScrapedItem) -> Paper | Repository | NewsArticle
             source=SourceType.GITHUB,
             content=item.content,
             tags=tags_str,
-            scraped_at=item.scraped_at,
-            published_at=item.published_at,
+            scraped_at=scraped_at,
+            published_at=published_at,
             full_name=item.extra.get("full_name", item.title),
             description=item.extra.get("description"),
             language=item.extra.get("language"),
@@ -242,7 +253,7 @@ def scraped_item_to_model(item: ScrapedItem) -> Paper | Repository | NewsArticle
             open_issues=item.extra.get("open_issues", 0),
             topics=item.extra.get("topics"),
             readme_content=item.extra.get("readme_content"),
-            last_pushed_at=item.extra.get("last_pushed_at"),
+            last_pushed_at=_to_naive_utc(item.extra.get("last_pushed_at")),
         )
 
     elif item.source == "news":
@@ -252,8 +263,8 @@ def scraped_item_to_model(item: ScrapedItem) -> Paper | Repository | NewsArticle
             source=SourceType.NEWS,
             content=item.content,
             tags=tags_str,
-            scraped_at=item.scraped_at,
-            published_at=item.published_at,
+            scraped_at=scraped_at,
+            published_at=published_at,
             feed_name=item.extra.get("feed_name", ""),
             feed_url=item.extra.get("feed_url", ""),
             author=item.extra.get("author"),
@@ -267,8 +278,8 @@ def scraped_item_to_model(item: ScrapedItem) -> Paper | Repository | NewsArticle
             source=SourceType.REDDIT,
             content=item.content,
             tags=tags_str,
-            scraped_at=item.scraped_at,
-            published_at=item.published_at,
+            scraped_at=scraped_at,
+            published_at=published_at,
             reddit_id=item.extra.get("reddit_id", ""),
             subreddit=item.extra.get("subreddit", ""),
             author=item.extra.get("author"),

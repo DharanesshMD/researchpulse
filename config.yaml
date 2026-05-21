@@ -5,6 +5,18 @@ scraping:
   schedule: "every 6 hours"
   max_items_per_source: 50
   request_timeout: 30
+  max_retries: 3                  # Number of retries on 429/5xx and connection errors
+  user_agent_rotation: true       # Rotate user agent strings on request failure/rotation
+  custom_user_agents: []          # Optional list of custom User-Agent strings to rotate
+
+  # Proxy rotation configuration for production-grade scraping
+  proxies:
+    enabled: false
+    ips:
+      - "http://proxy1.example.com:8080"
+      - "http://user:pass@proxy2.example.com:3128"
+    rotation_strategy: "round_robin"  # round_robin or random
+    health_check_url: "https://httpbin.org/ip"
 
   sources:
     arxiv:

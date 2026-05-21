@@ -36,7 +36,7 @@ class ResearchItemBase(SQLModel):
     summary: Optional[str] = Field(default=None)
     tags: Optional[str] = Field(default=None, description="Comma-separated tags")
     relevance_score: Optional[float] = Field(default=None)
-    scraped_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    scraped_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     published_at: Optional[datetime] = Field(default=None)
 
 
